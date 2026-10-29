@@ -263,7 +263,7 @@ public final class MainActivity extends Activity {
                 try{messages=parseSms(new JSONArray(prefs.getString("bg_sms_json","[]")));smsAt=smsTime;}catch(Exception ignored){}
             }
             // Never label a cached router status as ONLINE if the sample is stale.
-            if(statusAt<=0||now-statusAt>limit){status=null;statusAt=0;error="";}
+            if(statusAt<=0){status=null;statusAt=0;}error="";
             updateConnection();draw(true);return;
         }
         try{
@@ -594,8 +594,10 @@ public final class MainActivity extends Activity {
         LinearLayout hero=Ui.card(this);hero.setBackground(Ui.gradient(this,24,0xFF1D374D,0xFF102438,0xFF0D1A2B));
         LinearLayout top=Ui.horizontal(this);TextView badge=Ui.chip(this,band(),Ui.CYAN);overviewValues.put("band",badge);top.addView(badge);
         View spacer=new View(this);top.addView(spacer,new LinearLayout.LayoutParams(0,1,1));
-        TextView ppp=Ui.chip(this,stat("ppp_status").equals("ppp_connected")?"● LTE ONLINE":"○ LTE OFFLINE",
-            stat("ppp_status").equals("ppp_connected")?Ui.GREEN:Ui.RED);
+        boolean radioFresh=statusAt>0&&System.currentTimeMillis()-statusAt<30000;
+        boolean lteOnline=radioFresh&&stat("ppp_status").equals("ppp_connected");
+        TextView ppp=Ui.chip(this,!radioFresh?"◌ ОБНОВЛЕНИЕ":lteOnline?"● LTE ONLINE":"○ LTE OFFLINE",
+            !radioFresh?Ui.ORANGE:lteOnline?Ui.GREEN:Ui.RED);
         overviewValues.put("ppp",ppp);top.addView(ppp);hero.addView(top);
         LinearLayout center=Ui.horizontal(this);Ui.SignalGauge gauge=new Ui.SignalGauge(this);
         LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(0,d(166),1.15f);center.addView(gauge,gp);
