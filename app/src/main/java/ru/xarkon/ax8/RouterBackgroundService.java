@@ -42,6 +42,7 @@ public final class RouterBackgroundService extends Service {
         }else if(!busy){
             busy=true;worker.execute(()->{
                 long started=android.os.SystemClock.elapsedRealtime();
+                long startedWall=System.currentTimeMillis();
                 try{backgroundCycle();}
                 catch(Exception e){
                     String reason=e.getMessage()==null?e.toString():e.getMessage();
@@ -53,7 +54,7 @@ public final class RouterBackgroundService extends Service {
                         long elapsed=android.os.SystemClock.elapsedRealtime()-started;
                         int old=prefs.getInt("auto_poll_ms",500);
                         // A current successful radio sample confirms that AX8 has answered.
-                        boolean ok=prefs.getLong("bg_snapshot_at",0L)>System.currentTimeMillis()-Math.max(15000L,elapsed+1000L)
+                        boolean ok=prefs.getLong("bg_snapshot_at",0L)>=startedWall
                             && prefs.getString("bg_error","").isEmpty();
                         int adjusted=AutoPollController.next(old,elapsed,ok);
                         if(adjusted!=old)prefs.edit().putInt("auto_poll_ms",adjusted).apply();
