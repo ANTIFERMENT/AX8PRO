@@ -33,6 +33,8 @@ public final class MainActivity extends Activity {
     private final BandSwitchTracker bandTracker=new BandSwitchTracker();
     private boolean monitorOn=false;
     private String ownerMac="";
+    private final java.util.Set<String> expandedSettings=new java.util.LinkedHashSet<>();
+    private LinearLayout settingsTarget=null;
     private long lastCompleteAt=0,lastDrawAt=0;
     private String trafficError="";
 
@@ -140,11 +142,16 @@ public final class MainActivity extends Activity {
         int flags=Ui.isLight()?View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR:0;
         getWindow().getDecorView().setSystemUiVisibility(flags);
     }
-    private void applyAppearance(){Ui.load(prefs);applySystemBarTheme();int keep=tab;
-        createShell();tab=keep;rebuildNav();draw(false);
+    private void applyAppearance(){
+        int keep=tab;
+        int keepY=(scroll==null)?0:scroll.getScrollY();
+        Ui.load(prefs);applySystemBarTheme();
+        createShell();tab=keep;rebuildNav();draw(true);
+        scroll.post(()->scroll.scrollTo(0,Math.max(0,keepY)));
     }
-    private int refreshInterval(){int ms=prefs.getInt("refresh_ms",5000);
-        return (ms==100||ms==500||ms==1000||ms==2000||ms==5000)?ms:5000;
+    private int refreshInterval(){
+        int ms=prefs.getInt("refresh_ms",100);
+        return Math.max(100,Math.min(5000,((ms+50)/100)*100));
     }
     private void createShell(){
         root=Ui.vertical(this);root.setBackgroundColor(Ui.BG);
@@ -202,6 +209,7 @@ public final class MainActivity extends Activity {
         return Math.max(0,prefs.getInt("bg_sms_unread",0));
     }
     private void showTab(int index){
+        if(index==tab)return;
         tab=index;rebuildNav();draw(false);scroll.scrollTo(0,0);
         if(Ui.MOTION){content.setAlpha(0);content.setTranslationY(d(14));
             content.animate().alpha(1).translationY(0).setDuration(230).start();}
@@ -385,6 +393,7 @@ public final class MainActivity extends Activity {
                 }
                 if(sms2!=null){messages=sms2;smsAt=System.currentTimeMillis();}
                 if(blacklist!=null)blocked=blacklist;
+                autoSelectOwner(false);
                 lastCompleteAt=System.currentTimeMillis();
                 rebuildNav();
                 if(bandTracker.isPending()){
@@ -468,7 +477,7 @@ public final class MainActivity extends Activity {
             if(tab==expectedTab)scroll.scrollTo(0,Math.min(y,Math.max(0,content.getHeight()-scroll.getHeight())));
         });}
     }
-    private void addCard(LinearLayout v){LinearLayout.LayoutParams p=Ui.lp(this,-1,-2);p.bottomMargin=d(13);content.addView(v,p);}
+    private void addCard(LinearLayout v){LinearLayout.LayoutParams p=Ui.lp(this,-1,-2);p.bottomMargin=d(13);(settingsTarget!=null?settingsTarget:content).addView(v,p);}
     private void addTitle(String s,String sub){LinearLayout v=Ui.vertical(this);v.setPadding(d(4),d(8),d(3),d(18));
         Ui.title(v,this,s,sub);content.addView(v);
     }
@@ -1256,29 +1265,95 @@ public final class MainActivity extends Activity {
     }
     private void settings(){
         settingsValues.clear();
-        addTitle("Параметры","Соединение, обновление данных и служебные функции");
+        addTitle("Параметры","Категории настроек · нажмите для раскрытия");
+        addSettingsSection("connection","⌁","Подключение и мониторинг",
+            "WebUI, Telnet и частота опроса 0.1–5 с",this::addConnectionMonitorSettings);
+        addSettingsSection("appearance","◉","Оформление",
+            "Тема, цвет акцента, фон, шрифт и анимации",this::addAppearanceSettings);
+        addSettingsSection("traffic","◈","Трафик и устройства",
+            "Мониторинг клиентов, приоритет и хозяин",this::addTrafficSettings);
+        addSettingsSection("background","◌","Работа в фоне",
+            "Служба, уведомления и контроль ограничений",this::addBackgroundSettings);
+        addSettingsSection("updates","↻","Обновления",
+            "Проверка, установка и периодические обновления",this::addOtaSettings);
+        addSettingsSection("diagnostics","⚙","Инструменты и информация",
+            "Экспорт диагностики, сброс и безопасность",this::addDiagnosticsInfoSettings);
+    }
+    private void addSettingsSection(String key,String symbol,String title,String hint,Runnable populate){
+        LinearLayout wrapper=Ui.card(this);
+        wrapper.setPadding(d(13),d(11),d(13),d(11));
+        LinearLayout head=Ui.horizontal(this);head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView emblem=Ui.text(this,symbol,22,Ui.CYAN,true);
+        emblem.setGravity(Gravity.CENTER);emblem.setMinWidth(d(39));head.addView(emblem);
+        LinearLayout words=Ui.vertical(this);words.setPadding(d(9),0,d(5),0);
+        words.addView(Ui.text(this,title,16,Ui.TEXT,true));Ui.addSpace(words,this,4);
+        words.addView(Ui.text(this,hint,12,Ui.MUTED,false));
+        head.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+        TextView arrow=Ui.text(this,expandedSettings.contains(key)?"⌃":"⌄",24,Ui.CYAN,true);
+        arrow.setGravity(Gravity.CENTER);arrow.setMinWidth(d(30));head.addView(arrow);
+        wrapper.addView(head);
+        LinearLayout body=Ui.vertical(this);body.setPadding(0,d(12),0,0);
+        boolean opened=expandedSettings.contains(key);
+        body.setVisibility(opened?View.VISIBLE:View.GONE);wrapper.addView(body);
+        if(opened)populateSettings(body,populate);
+        head.setOnClickListener(v->{
+            if(expandedSettings.contains(key)){
+                expandedSettings.remove(key);arrow.setText("⌄");body.animate().cancel();body.setVisibility(View.GONE);
+            }else{
+                expandedSettings.add(key);arrow.setText("⌃");body.removeAllViews();
+                populateSettings(body,populate);body.setVisibility(View.VISIBLE);
+                if(Ui.MOTION){body.setAlpha(0f);body.animate().alpha(1f).setDuration(190).start();}
+                else body.setAlpha(1f);
+            }
+            head.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
+        });
+        addCard(wrapper);
+    }
+    private void populateSettings(LinearLayout body,Runnable populate){
+        LinearLayout old=settingsTarget;settingsTarget=body;
+        try{populate.run();}finally{settingsTarget=old;}
+    }
+    private void addConnectionMonitorSettings(){
         LinearLayout conn=Ui.card(this);Ui.title(conn,this,"Подключение к роутеру","Настройка адреса AX8 и учётных данных");Ui.addSpace(conn,this,12);
         addRows(conn,new String[][]{{"Адрес WebUI",prefs.getString("host","192.168.150.1")},{"Пользователь",prefs.getString("username","root")},
             {"Telnet",prefs.getString("telnet_user","admin")+" / порт 4719"}});
         Ui.addSpace(conn,this,10);conn.addView(Ui.button(this,"⚙  Изменить подключение",Ui.CARD2,Ui.CYAN,()->editConnection()));addCard(conn);
-        LinearLayout refresh=Ui.card(this);Ui.title(refresh,this,"Мониторинг","Частота автоматического получения данных");Ui.addSpace(refresh,this,14);
-        String[] rates={"0.1с","0.5с","1с","2с","5с"};int[] intervals={100,500,1000,2000,5000};
-        LinearLayout buttons=Ui.horizontal(this);
-        for(int i=0;i<intervals.length;i++){int val=intervals[i];boolean is=refreshInterval()==val;
-            TextView x=Ui.button(this,rates[i],is?Ui.CYAN:Ui.CARD2,is?Ui.BG:Ui.TEXT,()->{
-                prefs.edit().putInt("refresh_ms",val).apply();
-                handler.removeCallbacks(ticker);handler.post(ticker);draw(true);
-            });LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,d(46),1);lp.rightMargin=d(7);buttons.addView(x,lp);
-        }refresh.addView(buttons);Ui.addSpace(refresh,this,11);
-        refresh.addView(Ui.text(this,"Один интервал для LTE, Wi‑Fi, блокировок, SMS и включённого мониторинга трафика. Запросы выполняются последовательно: если AX8 отвечает дольше 0.1/0.5 с, цикл пропускается, без очереди и перегрузки.",12,Ui.MUTED,false));
+        LinearLayout refresh=Ui.card(this);Ui.title(refresh,this,"Мониторинг","Частота автоматического получения данных");Ui.addSpace(refresh,this,12);
+        int now=refreshInterval();
+        TextView currentRate=Ui.text(this,String.format(Locale.US,"%.1f с",now/1000f),30,Ui.CYAN,true);
+        currentRate.setGravity(Gravity.CENTER_HORIZONTAL);refresh.addView(currentRate);
+        Ui.addSpace(refresh,this,8);
+        SeekBar poll=new SeekBar(this);poll.setMax(49);poll.setProgress((now-100)/100);
+        poll.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.CYAN));
+        poll.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.CYAN));
+        refresh.addView(poll);
+        LinearLayout scale=Ui.horizontal(this);
+        TextView minimum=Ui.text(this,"0.1 с · максимум AX8",11,Ui.MUTED,false);
+        TextView maximum=Ui.text(this,"5.0 с",11,Ui.MUTED,false);
+        maximum.setGravity(Gravity.END);
+        scale.addView(minimum,new LinearLayout.LayoutParams(0,-2,1));
+        scale.addView(maximum,new LinearLayout.LayoutParams(0,-2,1));
+        refresh.addView(scale);Ui.addSpace(refresh,this,9);
+        poll.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onStartTrackingTouch(SeekBar b){}
+            public void onProgressChanged(SeekBar b,int value,boolean fromUser){
+                currentRate.setText(String.format(Locale.US,"%.1f с",(value+1)/10f));
+            }
+            public void onStopTrackingTouch(SeekBar b){
+                int selected=(Math.max(0,Math.min(49,b.getProgress()))+1)*100;
+                prefs.edit().putInt("refresh_ms",selected).apply();
+                handler.removeCallbacks(ticker);if(running)handler.post(ticker);
+                // No draw(): the finger, slider and current scroll position must be retained.
+                b.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+            }
+        });
+        refresh.addView(Ui.text(this,"Слева расположен максимально частый последовательный опрос AX8 (по умолчанию). Фактическая скорость обновления ограничена временем ответа роутера. Один интервал для LTE, клиентов, SMS и трафика, без параллельной очереди запросов.",12,Ui.MUTED,false));
         Ui.addSpace(refresh,this,8);
         LinearLayout lastRow=Ui.infoRow(this,"Последний полный опрос",lastCompleteAt==0?"—":android.text.format.DateFormat.format("HH:mm:ss",lastCompleteAt).toString(),Ui.CYAN);
         settingsValues.put("last_poll",(TextView)lastRow.getChildAt(1));refresh.addView(lastRow);
         addCard(refresh);
-        addBackgroundSettings();
-        addOtaSettings();
-        addAppearanceSettings();
-        addTrafficSettings();
+    }
+    private void addDiagnosticsInfoSettings(){
         LinearLayout storage=Ui.card(this);Ui.title(storage,this,"Данные и диагностика","Экспорт настроек для проверки и восстановления");Ui.addSpace(storage,this,11);
         storage.addView(Ui.button(this,"⇧  Поделиться диагностикой",Ui.CARD2,Ui.TEXT,()->exportDiagnostic()));
         Ui.addSpace(storage,this,9);
@@ -1287,17 +1362,17 @@ public final class MainActivity extends Activity {
         }));Ui.addSpace(storage,this,9);
         storage.addView(Ui.button(this,"⌫  Стереть локальные псевдонимы",Ui.CARD2,Ui.RED,()->confirm("Сброс имён","Удалить локальные имена клиентов?",
             ()->{android.content.SharedPreferences.Editor e=prefs.edit();for(String key:prefs.getAll().keySet())if(key.startsWith("alias_"))e.remove(key);e.apply();draw(true);})));addCard(storage);
-        LinearLayout about=Ui.card(this);Ui.title(about,this,"О приложении","AX 8 PRO · OTA Edition · 1.5.0");Ui.addSpace(about,this,9);
+        LinearLayout about=Ui.card(this);Ui.title(about,this,"О приложении","AX 8 PRO · "+BuildConfigVersion());Ui.addSpace(about,this,9);
         about.addView(Ui.text(this,"Клиент для OLAX AX8 Pro / Sanechips. Для безопасности все управляющие действия выполняются в локальной сети. Telnet не шифрует пароль и команды.",12,Ui.MUTED,false));
         Ui.addSpace(about,this,12);about.addView(Ui.text(this,"Мониторинг каждого клиента использует Telnet и правила AX8_APP_MON/AX8_APP_MON6. Приоритет может продолжаться в включённом вручную фоновом режиме. Реальное соблюдение лимитов зависит от прошивки AX8, маршрутизации и аппаратного ускорения.",12,Ui.ORANGE,false));
         addCard(about);
     }
     private void addOtaSettings(){
         LinearLayout panel=Ui.card(this);
-        Ui.title(panel,this,"Обновления OTA","Официальный канал GitHub Releases · AX 8 PRO");
+        Ui.title(panel,this,"Обновления OTA","Официальный канал обновлений AX 8 PRO");
         Ui.addSpace(panel,this,12);
         panel.addView(Ui.infoRow(this,"Версия",BuildConfigVersion(),Ui.CYAN));
-        panel.addView(Ui.infoRow(this,"Источник","ANTIFERMENT / AX8PRO",Ui.TEXT));
+        panel.addView(Ui.infoRow(this,"Источник","Официальный канал AX 8 PRO",Ui.TEXT));
         Ui.addSpace(panel,this,9);
         panel.addView(Ui.button(this,"↻  Проверить обновления",Ui.CARD2,Ui.CYAN,()->checkOta(false)));
         Ui.addSpace(panel,this,9);
@@ -1316,7 +1391,7 @@ public final class MainActivity extends Activity {
     }
     private String BuildConfigVersion(){
         try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
-        catch(Exception ignored){return "1.5.0";}
+        catch(Exception ignored){return "1.5.1";}
     }
     private void checkOta(boolean silent){
         if(!silent)displayWork("Проверка официального обновления…");
@@ -1326,7 +1401,7 @@ public final class MainActivity extends Activity {
                 displayWork("");
                 if(!newer){if(!silent)toast("Установлена актуальная версия");return;}
                 Ui.modal(MainActivity.this,"Доступно обновление " + release.versionName,
-                    release.notes.isEmpty()?"Обновить AX 8 PRO из официального GitHub Releases?":release.notes,
+                    release.notes.isEmpty()?"Обновить AX 8 PRO из официального канала?":release.notes,
                     null,"Скачать и установить",()->downloadOta(release));
             }
             @Override public void downloaded(java.io.File apk){
@@ -1429,7 +1504,7 @@ public final class MainActivity extends Activity {
                 .putString("telnet_pass",telnetPass.getText().toString()).apply();
             qos.close();traffic.close();api.configure(h,username.getText().toString(),password.getText().toString());
             qos=new QosController(api,prefs);traffic=new DeviceTrafficMonitor(api,prefs);
-            error="";blocked=null;status=null;statusAt=clientsAt=smsAt=0;refresh(true);draw(false);
+            error="";blocked=null;status=null;statusAt=clientsAt=smsAt=0;refresh(true);draw(true);
         });
     }
     private EditText settingField(LinearLayout parent,String title,String value,boolean secret){
@@ -1459,6 +1534,14 @@ public final class MainActivity extends Activity {
         c.addView(Ui.button(this,"⚡ Приоритет хозяина и массовые лимиты",Ui.CARD2,Ui.TEXT,()->bulkControls()));
         Ui.addSpace(c,this,9);
         c.addView(Ui.infoRow(this,"Мой MAC",ownerMac.isEmpty()?"не выбран":ownerMac,Ui.CYAN));
+        boolean autoOwner=prefs.getBoolean("auto_owner",true);
+        c.addView(Ui.button(this,autoOwner?"☑ Автовыбор хозяина":"☐ Автовыбор хозяина",Ui.CARD2,Ui.TEXT,()->{
+            boolean next=!prefs.getBoolean("auto_owner",true);
+            prefs.edit().putBoolean("auto_owner",next).apply();
+            if(next)autoSelectOwner(true);
+            draw(true);
+        }));
+        Ui.addSpace(c,this,8);
         c.addView(Ui.infoRow(this,"Приоритет",priority.enabled?priority.mode:"выключен",priority.enabled?Ui.GREEN:Ui.MUTED));
         if(monitorOn){
             Ui.addSpace(c,this,9);
@@ -1492,9 +1575,7 @@ public final class MainActivity extends Activity {
             themes.addView(line);Ui.addSpace(themes,this,8);
         }
         theme.addView(themes);Ui.addSpace(theme,this,10);
-        theme.addView(Ui.button(this,"◉  Палитра QR LINK · 24 цвета",Ui.CARD2,Ui.CYAN,()->chooseQrPalette()));
-        Ui.addSpace(theme,this,8);
-        theme.addView(Ui.button(this,"◉  Цвет акцента",Ui.CARD2,Ui.CYAN,()->pickColor("accent_color","Акцентный цвет",Ui.CYAN)));
+        theme.addView(Ui.button(this,"◉  Цвет акцента",Ui.CARD2,Ui.CYAN,()->chooseAccentPalette()));
         Ui.addSpace(theme,this,8);
         theme.addView(Ui.button(this,"▣  Цвет фона",Ui.CARD2,Ui.TEXT,()->pickColor("background_color","Цвет фона",Ui.BG)));
         Ui.addSpace(theme,this,8);
@@ -1529,7 +1610,7 @@ public final class MainActivity extends Activity {
         })));
         addCard(theme);
     }
-    private void chooseQrPalette(){
+    private void chooseAccentPalette(){
         final int[] colors={
             0xff55dfcb,0xff43baf5,0xff658aff,0xffac8dff,0xffdb91ff,0xffff77ce,
             0xffff7085,0xffff936d,0xffffba63,0xffffd45a,0xffd0e46d,0xff90df79,
@@ -1543,7 +1624,7 @@ public final class MainActivity extends Activity {
             "Рубин","Бронза","Сталь","Лёд","Шалфей","Слива"
         };
         LinearLayout body=Ui.vertical(this);final Dialog[] dlog={null};
-        body.addView(Ui.text(this,"Палитра и названия цветов перенесены из QR LINK. Выбор применяется ко всем акцентным элементам.",12,Ui.MUTED,false));
+        body.addView(Ui.text(this,"Выбор применяется ко всем акцентным элементам интерфейса.",12,Ui.MUTED,false));
         Ui.addSpace(body,this,12);
         for(int i=0;i<colors.length;i+=3){
             LinearLayout row=Ui.horizontal(this);
@@ -1560,7 +1641,7 @@ public final class MainActivity extends Activity {
             }
             body.addView(row);Ui.addSpace(body,this,5);
         }
-        dlog[0]=Ui.sheet(this,"Палитра QR LINK","24 акцентных оттенка",body);
+        dlog[0]=Ui.sheet(this,"Цвет акцента","24 акцентных оттенка",body);
     }
     private String fontLabel(String key){
         if(key.equals("monospace"))return "Моноширинный";
@@ -1642,8 +1723,17 @@ public final class MainActivity extends Activity {
     }
     private void chooseOwner(){
         LinearLayout body=Ui.vertical(this);final Dialog[] sheet={null};
+        body.addView(Ui.button(this,prefs.getBoolean("auto_owner",true)?"☑ Автовыбор хозяина":"☐ Автовыбор хозяина",Ui.CARD2,Ui.CYAN,()->{
+            prefs.edit().putBoolean("auto_owner",!prefs.getBoolean("auto_owner",true)).apply();
+            if(prefs.getBoolean("auto_owner",true))autoSelectOwner(true);
+            if(sheet[0]!=null)sheet[0].dismiss();
+            chooseOwner();
+        }));
+        Ui.addSpace(body,this,10);
         if(devices.isEmpty())body.addView(Ui.text(this,"Нет доступных устройств. Обновите клиентов.",13,Ui.MUTED,false));
         for(RouterClient.Device dev:devices){
+            // Do not present stale DHCP records without an active IPv4 address as owners.
+            if(dev.ip==null||!dev.ip.matches("[0-9]+(\\.[0-9]+){3}"))continue;
             boolean selected=dev.mac.equals(ownerMac);
             body.addView(Ui.button(this,(selected?"✓  ":"")+prefs.getString("alias_"+dev.mac,dev.name)+" · "+dev.ip,
                 selected?Ui.CYAN:Ui.CARD2,selected?Ui.contrastOn(Ui.CYAN):Ui.TEXT,()->{
@@ -1664,8 +1754,20 @@ public final class MainActivity extends Activity {
                         });
                 }));Ui.addSpace(body,this,8);
         }
-        sheet[0]=Ui.sheet(this,"Кто хозяин?","Выбранный MAC защищён от массового QoS",body);
+        sheet[0]=Ui.sheet(this,"Кто хозяин?","Выбранный MAC защищён от массового QoS. Автовыбор использует текущее Wi‑Fi подключение телефона.",body);
     }
+    private void autoSelectOwner(boolean showToast){
+        if(!prefs.getBoolean("auto_owner",true)||devices.isEmpty())return;
+        try{
+            OwnerIdentity.Result identity=OwnerIdentity.resolve(this,devices,blocked,ownerMac);
+            if(identity.resolved()&&!identity.mac.equals(ownerMac)){
+                ownerMac=identity.mac;
+                prefs.edit().putString("owner_mac",ownerMac).apply();
+                if(showToast)toast("Хозяин определён автоматически: "+ownerMac);
+            }
+        }catch(Exception ignored){}
+    }
+
     private void chooseBulkLimit(){
         Integer[] values={null,0,15,20,30,50,100,250,300,500,750,1000,2000,5000,10000};
         LinearLayout body=Ui.vertical(this);final Dialog[] sheet={null};
