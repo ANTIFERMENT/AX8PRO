@@ -36,6 +36,7 @@ public final class MainActivity extends Activity {
     private final java.util.Set<String> expandedSettings=new java.util.LinkedHashSet<>();
     private LinearLayout settingsTarget=null;
     private long lastCompleteAt=0,lastDrawAt=0;
+    private int autoPollMs=500;
     private String trafficError="";
 
     private android.content.SharedPreferences prefs;
@@ -77,6 +78,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state){super.onCreate(state);
         prefs=getSharedPreferences("ax8_control",MODE_PRIVATE);
+        autoPollMs=AutoPollController.clamp(prefs.getInt("auto_poll_ms",500));
         api=new RouterClient(prefs.getString("host","192.168.150.1"),prefs.getString("username","root"),prefs.getString("password","admin"));
         qos=new QosController(api,prefs);traffic=new DeviceTrafficMonitor(api,prefs);
         ownerMac=prefs.getString("owner_mac","");monitorOn=prefs.getBoolean("traffic_monitor",false);
@@ -100,6 +102,7 @@ public final class MainActivity extends Activity {
         // Background service owns priority only when the UI is not visible.
         if(prefs.getBoolean("background_mode",false)&&prefs.getBoolean("background_priority",false)
                 &&monitorOn&&!ownerMac.isEmpty()&&!priority.enabled)priority.enable(ownerMac);
+        autoPollMs=AutoPollController.clamp(prefs.getInt("auto_poll_ms",500));
         running=true;handler.removeCallbacks(ticker);refresh(true);handler.postDelayed(ticker,refreshInterval());
     }
     @Override protected void onPause(){
@@ -149,9 +152,17 @@ public final class MainActivity extends Activity {
         createShell();tab=keep;rebuildNav();draw(true);
         scroll.post(()->scroll.scrollTo(0,Math.max(0,keepY)));
     }
+    private boolean automaticPolling(){return prefs.getBoolean("refresh_auto",true);}
     private int refreshInterval(){
-        int ms=prefs.getInt("refresh_ms",100);
-        return Math.max(100,Math.min(5000,((ms+50)/100)*100));
+        if(automaticPolling())return autoPollMs;
+        int ms=prefs.getInt("refresh_ms",500);
+        return AutoPollController.clamp(((ms+50)/100)*100);
+    }
+    private void observePoll(long elapsedMs,boolean success){
+        if(!automaticPolling())return;
+        int previous=autoPollMs;
+        autoPollMs=AutoPollController.next(previous,elapsedMs,success);
+        if(previous!=autoPollMs)prefs.edit().putInt("auto_poll_ms",autoPollMs).apply();
     }
     private void createShell(){
         root=Ui.vertical(this);root.setBackgroundColor(Ui.BG);
@@ -339,6 +350,7 @@ public final class MainActivity extends Activity {
         boolean wantSms=wantStatus;
         if(!wantStatus&&!wantClients&&!wantBlocked&&!wantSms)return;
         refreshBusy=true;
+        final long cycleStart=android.os.SystemClock.elapsedRealtime();
         workers.execute(()->{
             JSONObject next=null;List<RouterClient.Device> d=null;List<RouterClient.Sms> m=null;RouterClient.BlockState b=null;
             String failure=null,partialFailure=null;
@@ -367,6 +379,8 @@ public final class MainActivity extends Activity {
             final RouterClient.BlockState blacklist=b;final String fail=failure;
             handler.post(()->{
                 refreshBusy=false;
+                observePoll(android.os.SystemClock.elapsedRealtime()-cycleStart,
+                    status2!=null && sms2!=null && devices2!=null);
                 if(status2!=null){
                     double rx=num(status2,"realtime_rx_bytes"),tx=num(status2,"realtime_tx_bytes");
                     long sampleTime=System.currentTimeMillis();double sec=(sampleTime-lastBytesAt)/1000.0;
@@ -1262,13 +1276,20 @@ public final class MainActivity extends Activity {
         if(label!=null){String v=lastCompleteAt==0?"—":android.text.format.DateFormat.format("HH:mm:ss",lastCompleteAt).toString();
             if(!v.contentEquals(label.getText()))label.setText(v);
         }
+        TextView current=settingsValues.get("poll_selected");
+        if(current!=null&&automaticPolling()){
+            String text="Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f);
+            if(!text.contentEquals(current.getText()))current.setText(text);
+        }
     }
     private void settings(){
         settingsValues.clear();
         addTitle("Параметры","Категории настроек · нажмите для раскрытия");
-        addSettingsSection("connection","⌁","Подключение и мониторинг",
-            "WebUI, Telnet и частота опроса 0.1–5 с",this::addConnectionMonitorSettings);
-        addSettingsSection("appearance","◉","Оформление",
+        addSettingsSection("connection","⌁","Подключение",
+            "WebUI, Telnet и авторизация",this::addConnectionSettings);
+        addSettingsSection("monitoring","◷","Мониторинг",
+            "Автоматически или вручную: 0,5–5 секунд",this::addMonitorSettings);
+        addSettingsSection("appearance","◉","Персонализация",
             "Тема, цвет акцента, фон, шрифт и анимации",this::addAppearanceSettings);
         addSettingsSection("traffic","◈","Трафик и устройства",
             "Мониторинг клиентов, приоритет и хозяин",this::addTrafficSettings);
@@ -1313,23 +1334,40 @@ public final class MainActivity extends Activity {
         LinearLayout old=settingsTarget;settingsTarget=body;
         try{populate.run();}finally{settingsTarget=old;}
     }
-    private void addConnectionMonitorSettings(){
-        LinearLayout conn=Ui.card(this);Ui.title(conn,this,"Подключение к роутеру","Настройка адреса AX8 и учётных данных");Ui.addSpace(conn,this,12);
+    private void addConnectionSettings(){
+        LinearLayout conn=Ui.card(this);Ui.title(conn,this,"Подключение к роутеру","Адрес AX8 и учётные данные");Ui.addSpace(conn,this,12);
         addRows(conn,new String[][]{{"Адрес WebUI",prefs.getString("host","192.168.150.1")},{"Пользователь",prefs.getString("username","root")},
             {"Telnet",prefs.getString("telnet_user","admin")+" / порт 4719"}});
         Ui.addSpace(conn,this,10);conn.addView(Ui.button(this,"⚙  Изменить подключение",Ui.CARD2,Ui.CYAN,()->editConnection()));addCard(conn);
-        LinearLayout refresh=Ui.card(this);Ui.title(refresh,this,"Мониторинг","Частота автоматического получения данных");Ui.addSpace(refresh,this,12);
-        int now=refreshInterval();
-        TextView currentRate=Ui.text(this,String.format(Locale.US,"%.1f с",now/1000f),30,Ui.CYAN,true);
+    }
+    private void addMonitorSettings(){
+        LinearLayout refresh=Ui.card(this);Ui.title(refresh,this,"Мониторинг","Частота получения данных");Ui.addSpace(refresh,this,12);
+        boolean initialAuto=automaticPolling();
+        int manual=AutoPollController.clamp(prefs.getInt("refresh_ms",500));
+        TextView currentRate=Ui.text(this,initialAuto?"Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f):
+            String.format(Locale.US,"%.1f с",manual/1000f),26,Ui.CYAN,true);
         currentRate.setGravity(Gravity.CENTER_HORIZONTAL);refresh.addView(currentRate);
+        settingsValues.put("poll_selected",currentRate);
         Ui.addSpace(refresh,this,8);
-        SeekBar poll=new SeekBar(this);poll.setMax(49);poll.setProgress((now-100)/100);
+        final TextView[] autoButton={null};
+        autoButton[0]=Ui.button(this,initialAuto?"✓  Автоматически · ВКЛ":"◌  Автоматически",initialAuto?Ui.CYAN:Ui.CARD2,
+            initialAuto?Ui.contrastOn(Ui.CYAN):Ui.TEXT,()->{
+                prefs.edit().putBoolean("refresh_auto",true).apply();
+                currentRate.setText("Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f));
+                autoButton[0].setText("✓  Автоматически · ВКЛ");
+                autoButton[0].setTextColor(Ui.contrastOn(Ui.CYAN));
+                autoButton[0].setBackground(Ui.shape(this,Ui.CYAN,0,Math.max(4,Ui.CORNER-7)));
+                handler.removeCallbacks(ticker);if(running)handler.post(ticker);
+            });
+        refresh.addView(autoButton[0]);Ui.addSpace(refresh,this,12);
+        refresh.addView(Ui.text(this,"РУЧНОЙ ИНТЕРВАЛ",11,Ui.MUTED,true));Ui.addSpace(refresh,this,4);
+        SeekBar poll=new SeekBar(this);poll.setMax(45);poll.setProgress((manual-500)/100);
         poll.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.CYAN));
         poll.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.CYAN));
         refresh.addView(poll);
         LinearLayout scale=Ui.horizontal(this);
-        TextView minimum=Ui.text(this,"0.1 с · максимум AX8",11,Ui.MUTED,false);
-        TextView maximum=Ui.text(this,"5.0 с",11,Ui.MUTED,false);
+        TextView minimum=Ui.text(this,"0,5 с",11,Ui.MUTED,false);
+        TextView maximum=Ui.text(this,"5 с",11,Ui.MUTED,false);
         maximum.setGravity(Gravity.END);
         scale.addView(minimum,new LinearLayout.LayoutParams(0,-2,1));
         scale.addView(maximum,new LinearLayout.LayoutParams(0,-2,1));
@@ -1337,17 +1375,19 @@ public final class MainActivity extends Activity {
         poll.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             public void onStartTrackingTouch(SeekBar b){}
             public void onProgressChanged(SeekBar b,int value,boolean fromUser){
-                currentRate.setText(String.format(Locale.US,"%.1f с",(value+1)/10f));
+                if(fromUser)currentRate.setText(String.format(Locale.US,"%.1f с",(value+5)/10f));
             }
             public void onStopTrackingTouch(SeekBar b){
-                int selected=(Math.max(0,Math.min(49,b.getProgress()))+1)*100;
-                prefs.edit().putInt("refresh_ms",selected).apply();
+                int selected=(Math.max(0,Math.min(45,b.getProgress()))+5)*100;
+                prefs.edit().putBoolean("refresh_auto",false).putInt("refresh_ms",selected).apply();
+                currentRate.setText(String.format(Locale.US,"%.1f с",selected/1000f));
+                autoButton[0].setText("◌  Автоматически");autoButton[0].setTextColor(Ui.TEXT);
+                autoButton[0].setBackground(Ui.shape(MainActivity.this,Ui.CARD2,0,Math.max(4,Ui.CORNER-7)));
                 handler.removeCallbacks(ticker);if(running)handler.post(ticker);
-                // No draw(): the finger, slider and current scroll position must be retained.
                 b.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
             }
         });
-        refresh.addView(Ui.text(this,"Слева расположен максимально частый последовательный опрос AX8 (по умолчанию). Фактическая скорость обновления ограничена временем ответа роутера. Один интервал для LTE, клиентов, SMS и трафика, без параллельной очереди запросов.",12,Ui.MUTED,false));
+        refresh.addView(Ui.text(this,"Автоматически: приложение измеряет длительность полных ответов роутера и выбирает кратчайший устойчивый интервал от 0,5 до 5 секунд. При ошибках интервал увеличивается, после восстановления связи сокращается. Один последовательный цикл для всех данных, без одновременных запросов.",12,Ui.MUTED,false));
         Ui.addSpace(refresh,this,8);
         LinearLayout lastRow=Ui.infoRow(this,"Последний полный опрос",lastCompleteAt==0?"—":android.text.format.DateFormat.format("HH:mm:ss",lastCompleteAt).toString(),Ui.CYAN);
         settingsValues.put("last_poll",(TextView)lastRow.getChildAt(1));refresh.addView(lastRow);
@@ -1369,10 +1409,9 @@ public final class MainActivity extends Activity {
     }
     private void addOtaSettings(){
         LinearLayout panel=Ui.card(this);
-        Ui.title(panel,this,"Обновления OTA","Официальный канал обновлений AX 8 PRO");
+        Ui.title(panel,this,"Обновления","Установка новых версий приложения");
         Ui.addSpace(panel,this,12);
         panel.addView(Ui.infoRow(this,"Версия",BuildConfigVersion(),Ui.CYAN));
-        panel.addView(Ui.infoRow(this,"Источник","Официальный канал AX 8 PRO",Ui.TEXT));
         Ui.addSpace(panel,this,9);
         panel.addView(Ui.button(this,"↻  Проверить обновления",Ui.CARD2,Ui.CYAN,()->checkOta(false)));
         Ui.addSpace(panel,this,9);
