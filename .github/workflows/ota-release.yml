@@ -1,0 +1,149 @@
+name: AX 8 PRO · Android OTA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ota-release.yml'
+      - 'AX8PRO_SOURCE.zip'
+      - 'AX8PRO_v*.zip'
+      - 'scripts/import_source_zip.py'
+      - 'scripts/sign_release.py'
+      - 'scripts/make_manifest.py'
+      - 'app/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ax8pro-ota-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fetch source
+        uses: actions/checkout@v4
+
+      - name: Import source ZIP when Android project is not checked in
+        shell: bash
+        run: python3 scripts/import_source_zip.py
+
+      - name: Confirm Android project is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d app || { echo "::error::app/ is missing. Upload AX 8 PRO Android sources first."; exit 1; }
+          test -f settings.gradle -o -f settings.gradle.kts || { echo "::error::settings.gradle(.kts) is missing"; exit 1; }
+
+      - name: Keep source files in GitHub for direct future edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch app/src/main/AndroidManifest.xml >/dev/null 2>&1; then
+            echo "Android source is already tracked. Ready for direct GitHub edits."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/src/main app/build.gradle build.gradle settings.gradle gradle.properties
+          if git diff --cached --quiet; then
+            echo "Nothing to promote"
+            exit 0
+          fi
+          git commit -m "chore: track AX 8 PRO Android source directly in GitHub"
+          git push origin HEAD:main
+          echo "Android source is now version-controlled in this repository."
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install SDK platforms and signing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-35" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.1'
+
+      - name: Assemble release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f gradlew && -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon :app:assembleRelease
+          else
+            echo "Gradle Wrapper missing/incomplete: using installed Gradle 9.6.1"
+            gradle --no-daemon :app:assembleRelease
+          fi
+
+      - name: Sign APK with the permanent official identity
+        shell: bash
+        env:
+          AX8PRO_SIGNING_BUNDLE: ${{ secrets.AX8PRO_SIGNING_BUNDLE }}
+        run: python3 scripts/sign_release.py
+
+      - name: Generate and validate update.json
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/make_manifest.py \
+            --apk dist/AX8PRO.apk \
+            --aapt "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --output dist/update.json \
+            --github-output "$GITHUB_OUTPUT"
+          python3 -m json.tool dist/update.json >/dev/null
+
+      - name: Save APK and manifest as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AX8PRO-APK-and-OTA
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Notice when repository is private
+        if: ${{ github.event.repository.private }}
+        run: echo "::warning::This repository is private; unauthenticated Android clients cannot download Release assets."
+
+      - name: Publish new version to GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Version $RELEASE_TAG was already released. Change versionName and versionCode for the next release."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" dist/AX8PRO.apk dist/update.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AX 8 PRO $RELEASE_VERSION" \
+            --generate-notes \
+            --latest
