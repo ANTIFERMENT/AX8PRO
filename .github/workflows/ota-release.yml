@@ -72,6 +72,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test automatic monitoring logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ax8-auto-test
+          javac -d /tmp/ax8-auto-test \
+            app/src/main/java/ru/xarkon/ax8/AutoPollController.java \
+            tools/AutoPollControllerTest.java
+          java -cp /tmp/ax8-auto-test AutoPollControllerTest
+
       - name: Android SDK
         uses: android-actions/setup-android@v4
 
