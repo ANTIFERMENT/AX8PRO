@@ -98,7 +98,7 @@ public final class RouterBackgroundService extends Service {
         }
         if(intent!=null && ACTION_TEST_SMS.equals(intent.getAction())){
             RouterClient.Sms test=new RouterClient.Sms();test.number="Тестовое SMS";
-            test.content="Проверка уведомлений XARKON AX8. Новое SMS не получено.";
+            test.content="Проверка уведомлений AX 8 PRO. Новое SMS не получено.";
             notifyNewSms(test,1);
             return START_STICKY;
         }
@@ -111,7 +111,7 @@ public final class RouterBackgroundService extends Service {
         Intent stop=new Intent(this,RouterBackgroundService.class).setAction(ACTION_STOP);
         PendingIntent stopPending=PendingIntent.getService(this,1,stop,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_app)
-            .setContentTitle("XARKON AX8 · Фоновый режим").setContentText(status)
+            .setContentTitle("AX 8 PRO · Фоновый режим").setContentText(status)
             .setContentIntent(open).setOngoing(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel,"Остановить",stopPending).build();
     }
