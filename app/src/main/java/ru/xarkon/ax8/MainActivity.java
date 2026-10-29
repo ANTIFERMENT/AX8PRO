@@ -85,6 +85,7 @@ public final class MainActivity extends Activity {
         bandTracker.restore(prefs.getInt("pending_band",BandSwitchTracker.NONE),
             prefs.getLong("pending_band_since",0L),System.currentTimeMillis());
         if(!bandTracker.isPending() && prefs.contains("pending_band"))clearPendingBand();
+        restoreRecentRouterSnapshot();
         Ui.load(prefs);applySystemBarTheme();requestNotificationPermission();createShell();showTab(0);UpdateSchedule.configure(this);
     }
     @Override protected void onResume(){
@@ -245,6 +246,13 @@ public final class MainActivity extends Activity {
             requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},902);
         }
     }
+    private void restoreRecentRouterSnapshot(){
+        long ts=prefs.getLong("last_router_status_at",0L);
+        if(ts<=0||System.currentTimeMillis()-ts>300000L)return;
+        String saved=prefs.getString("last_router_status","");
+        if(saved.isEmpty())return;
+        try{status=new JSONObject(saved);statusAt=ts;}catch(Exception ignored){}
+    }
     private void loadBackgroundSnapshot(){
         long now=System.currentTimeMillis();
         long ts=prefs.getLong("bg_snapshot_at",0L);
@@ -359,7 +367,18 @@ public final class MainActivity extends Activity {
         workers.execute(()->{
             JSONObject next=null;List<RouterClient.Device> d=null;List<RouterClient.Sms> m=null;RouterClient.BlockState b=null;
             String failure=null,partialFailure=null;
-            if(wantStatus)try{next=api.status();}catch(Exception e){failure=e.getMessage()==null?e.toString():e.getMessage();}
+            if(wantStatus)try{
+                next=api.status();
+                if(next!=null && forced && !bandTracker.isPending()){
+                    final JSONObject early=next;
+                    handler.post(()->{
+                        if(!running||bandTracker.isPending())return;
+                        status=early;statusAt=System.currentTimeMillis();error="";
+                        updateConnection();
+                        if(tab==0)draw(true);
+                    });
+                }
+            }catch(Exception e){failure=e.getMessage()==null?e.toString():e.getMessage();}
             // After a requested Band reboot only status is needed. Other WebUI calls
             // would multiply failed login attempts and delay recovery by many seconds.
             if(!bandTracker.isPending()){
@@ -392,6 +411,8 @@ public final class MainActivity extends Activity {
                     if(lastBytesAt>0&&sec>.3&&rx>=lastRx&&tx>=lastTx){fallbackDl=(rx-lastRx)/sec;fallbackUl=(tx-lastTx)/sec;}
                     lastRx=rx;lastTx=tx;lastBytesAt=sampleTime;
                     status=status2;statusAt=sampleTime;
+                    prefs.edit().putString("last_router_status",status2.toString())
+                        .putLong("last_router_status_at",sampleTime).apply();
                     float liveDl=(float)Math.max(0,rateValue(status2,"realtime_rx_thrpt",fallbackDl));
                     float liveUl=(float)Math.max(0,rateValue(status2,"realtime_tx_thrpt",fallbackUl));
                     historyDl.add(liveDl);historyUl.add(liveUl);
@@ -471,7 +492,7 @@ public final class MainActivity extends Activity {
         boolean online=fresh&&error.isEmpty();
         String label;
         if(bandTracker.isPending())label="◌  ПРОВЕРКА "+(bandTracker.requestedBand()==0?"AUTO":"B"+bandTracker.requestedBand());
-        else label=online?"●  ONLINE":(statusAt==0&&error.isEmpty()?"◌  ОПРОС":"●  ОФЛАЙН");
+        else label=online?"●  ONLINE":(error.isEmpty()?"◌  ОБНОВЛЕНИЕ":"●  ОФЛАЙН");
         connectionLabel.setText(label);
         connectionLabel.setTextColor(bandTracker.isPending()?Ui.ORANGE:
             (online?Ui.GREEN:(statusAt==0&&error.isEmpty()?Ui.ORANGE:Ui.RED)));
