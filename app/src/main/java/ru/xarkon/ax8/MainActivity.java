@@ -1473,7 +1473,7 @@ public final class MainActivity extends Activity {
     }
     private String BuildConfigVersion(){
         try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
-        catch(Exception ignored){return "1.5.1";}
+        catch(Exception ignored){return "1.5.3";}
     }
     private boolean startupOtaChecked=false,otaCheckBusy=false;
     private void checkOta(boolean silent){
