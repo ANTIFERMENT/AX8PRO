@@ -66,8 +66,8 @@ final class OwnerIdentity {
             if(matches.size()!=1)return new Result("","IP телефона: "+String.join(", ",addresses)+
                 ". Совпадений в клиентах AX8: "+matches.size()+". Обновите список и проверьте подключение телефона к Wi-Fi AX8.","",false);
             mac=matches.iterator().next();source="по Wi-Fi IP";
-            if(!fromRouter.isEmpty()&&!mac.equals(fromRouter))return new Result("",
-                "MAC из WebUI не совпал с клиентом по IP телефона. Блокировка отменена.","",false);
+            // The WebUI user MAC is often stale or represents a separate admin session.
+            // An unambiguous current Wi-Fi IP match is more reliable than that field.
         }else if(!fromRouter.isEmpty()){
             mac=fromRouter;source="WebUI AX8";
         }else if(!selected.isEmpty()){
