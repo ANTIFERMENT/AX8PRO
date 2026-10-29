@@ -1,0 +1,18 @@
+import ru.xarkon.ax8.AutoPollController;
+public final class AutoPollControllerTest {
+    private static void check(boolean ok,String reason){if(!ok)throw new AssertionError(reason);}
+    public static void main(String[] a){
+        check(AutoPollController.clamp(100)==500,"0.1 s must not be selectable");
+        check(AutoPollController.clamp(5300)==5000,"manual cap");
+        check(AutoPollController.next(500,120,true)==500,"fast router gets minimum");
+        check(AutoPollController.next(500,1200,true)>=1500,"slow response gets safe wait");
+        int p=AutoPollController.next(500,1300,true);
+        check(AutoPollController.next(p,100,true)<p,"recover after slowdown");
+        check(AutoPollController.next(500,100,false)>500,"backoff on failure");
+        int x=500;for(int i=0;i<200;i++){
+            x=AutoPollController.next(x, i%5==0?2800:120,i%11!=0);
+            check(x>=500&&x<=5000&&x%100==0,"always within allowed range");
+        }
+        System.out.println("Auto polling: 7 groups PASSED");
+    }
+}
