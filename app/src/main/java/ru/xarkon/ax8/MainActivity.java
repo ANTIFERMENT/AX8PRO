@@ -1278,7 +1278,7 @@ public final class MainActivity extends Activity {
         }
         TextView current=settingsValues.get("poll_selected");
         if(current!=null&&automaticPolling()){
-            String text="Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f);
+            String text=String.format(Locale.US,"%.1f с",autoPollMs/1000f);
             if(!text.contentEquals(current.getText()))current.setText(text);
         }
     }
@@ -1344,22 +1344,25 @@ public final class MainActivity extends Activity {
         LinearLayout refresh=Ui.card(this);Ui.title(refresh,this,"Мониторинг","Частота получения данных");Ui.addSpace(refresh,this,12);
         boolean initialAuto=automaticPolling();
         int manual=AutoPollController.clamp(prefs.getInt("refresh_ms",500));
-        TextView currentRate=Ui.text(this,initialAuto?"Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f):
-            String.format(Locale.US,"%.1f с",manual/1000f),26,Ui.CYAN,true);
-        currentRate.setGravity(Gravity.CENTER_HORIZONTAL);refresh.addView(currentRate);
+        TextView currentRate=Ui.text(this,String.format(Locale.US,"%.1f с",(initialAuto?autoPollMs:manual)/1000f),17,Ui.CYAN,true);
+        currentRate.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
         settingsValues.put("poll_selected",currentRate);
         Ui.addSpace(refresh,this,8);
         final TextView[] autoButton={null};
-        autoButton[0]=Ui.button(this,initialAuto?"✓  Автоматически · ВКЛ":"◌  Автоматически",initialAuto?Ui.CYAN:Ui.CARD2,
+        autoButton[0]=Ui.button(this,initialAuto?"✓  Автоматически":"○  Автоматически",initialAuto?Ui.CYAN:Ui.CARD2,
             initialAuto?Ui.contrastOn(Ui.CYAN):Ui.TEXT,()->{
                 prefs.edit().putBoolean("refresh_auto",true).apply();
-                currentRate.setText("Автоматически · "+String.format(Locale.US,"%.1f с",autoPollMs/1000f));
-                autoButton[0].setText("✓  Автоматически · ВКЛ");
+                currentRate.setText(String.format(Locale.US,"%.1f с",autoPollMs/1000f));
+                autoButton[0].setText("✓  Автоматически");
                 autoButton[0].setTextColor(Ui.contrastOn(Ui.CYAN));
                 autoButton[0].setBackground(Ui.shape(this,Ui.CYAN,0,Math.max(4,Ui.CORNER-7)));
                 handler.removeCallbacks(ticker);if(running)handler.post(ticker);
             });
-        refresh.addView(autoButton[0]);Ui.addSpace(refresh,this,12);
+        LinearLayout autoRow=Ui.horizontal(this);
+        autoRow.addView(autoButton[0],new LinearLayout.LayoutParams(0,-2,1.6f));
+        currentRate.setPadding(d(8),0,0,0);
+        autoRow.addView(currentRate,new LinearLayout.LayoutParams(0,-2,1f));
+        refresh.addView(autoRow);Ui.addSpace(refresh,this,12);
         refresh.addView(Ui.text(this,"РУЧНОЙ ИНТЕРВАЛ",11,Ui.MUTED,true));Ui.addSpace(refresh,this,4);
         SeekBar poll=new SeekBar(this);poll.setMax(45);poll.setProgress((manual-500)/100);
         poll.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.CYAN));
@@ -1381,7 +1384,7 @@ public final class MainActivity extends Activity {
                 int selected=(Math.max(0,Math.min(45,b.getProgress()))+5)*100;
                 prefs.edit().putBoolean("refresh_auto",false).putInt("refresh_ms",selected).apply();
                 currentRate.setText(String.format(Locale.US,"%.1f с",selected/1000f));
-                autoButton[0].setText("◌  Автоматически");autoButton[0].setTextColor(Ui.TEXT);
+                autoButton[0].setText("○  Автоматически");autoButton[0].setTextColor(Ui.TEXT);
                 autoButton[0].setBackground(Ui.shape(MainActivity.this,Ui.CARD2,0,Math.max(4,Ui.CORNER-7)));
                 handler.removeCallbacks(ticker);if(running)handler.post(ticker);
                 b.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
