@@ -139,10 +139,11 @@ public final class UpdateManager {
                 android.widget.Toast.makeText(a,"Разрешите установку и повторно нажмите обновление",android.widget.Toast.LENGTH_LONG).show();return;
             }
             Uri uri=Uri.parse("content://ru.xarkon.ax8pro.ota/apk");
-            Intent intent=new Intent(Intent.ACTION_VIEW);
+            Intent intent=new Intent(Intent.ACTION_INSTALL_PACKAGE);
             intent.setDataAndType(uri,"application/vnd.android.package-archive");
-            intent.setClipData(ClipData.newRawUri("AX 8 PRO",uri));
+            intent.setClipData(ClipData.newRawUri("AX8 PRO CONTROL",uri));
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.putExtra(Intent.EXTRA_RETURN_RESULT,false);
             a.startActivity(intent);
         }catch(Exception e){new android.app.AlertDialog.Builder(a).setTitle("Обновление OTA")
             .setMessage(friendly(e)).setPositiveButton("Понятно",null).show();}
