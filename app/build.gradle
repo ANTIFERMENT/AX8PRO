@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'ru.xarkon.ax8'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'ru.xarkon.ax8pro'
+        minSdk 26
+        targetSdk 35
+        versionCode 18
+        versionName '1.5.0'
+    }
+    // GitHub Actions signs release APK with the permanent AX8PRO key.
+    // Debug builds use the normal local debug signer only for development.
+    buildTypes { release { minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
