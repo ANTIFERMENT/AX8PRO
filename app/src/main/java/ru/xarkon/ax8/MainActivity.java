@@ -1425,7 +1425,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("ota_background",!background).apply();UpdateSchedule.configure(this);draw(true);
         }));
         Ui.addSpace(panel,this,9);
-        panel.addView(Ui.text(this,"Перед установкой проверяются версия, пакет, SHA-256 APK и неизменяемая подпись разработчика. Другие источники OTA отключены.",12,Ui.MUTED,false));
+        panel.addView(Ui.text(this,"Перед установкой проверяются версия, пакет, контрольная сумма APK и цифровая подпись приложения.",12,Ui.MUTED,false));
         addCard(panel);
     }
     private String BuildConfigVersion(){
