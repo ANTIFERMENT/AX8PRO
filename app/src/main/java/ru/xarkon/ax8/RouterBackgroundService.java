@@ -41,17 +41,32 @@ public final class RouterBackgroundService extends Service {
             if(backgroundActive && !busy){busy=true;worker.execute(()->{try{endBackgroundCycle();}finally{busy=false;}});}
         }else if(!busy){
             busy=true;worker.execute(()->{
+                long started=android.os.SystemClock.elapsedRealtime();
                 try{backgroundCycle();}
                 catch(Exception e){
                     String reason=e.getMessage()==null?e.toString():e.getMessage();
                     prefs.edit().putLong("bg_last_poll",System.currentTimeMillis())
                         .putString("bg_error",reason).apply();
                     notifyState("Фоновый опрос AX8: "+reason);
-                }finally{busy=false;}
+                }finally{
+                    if(prefs.getBoolean("refresh_auto",true)){
+                        long elapsed=android.os.SystemClock.elapsedRealtime()-started;
+                        int old=prefs.getInt("auto_poll_ms",500);
+                        // A current successful radio sample confirms that AX8 has answered.
+                        boolean ok=prefs.getLong("bg_snapshot_at",0L)>System.currentTimeMillis()-Math.max(15000L,elapsed+1000L)
+                            && prefs.getString("bg_error","").isEmpty();
+                        int adjusted=AutoPollController.next(old,elapsed,ok);
+                        if(adjusted!=old)prefs.edit().putInt("auto_poll_ms",adjusted).apply();
+                    }
+                    busy=false;
+                }
             });
         }
-        // The router may not answer as quickly as the requested 0.1s interval.
-        handler.postDelayed(this,Math.max(100,prefs.getInt("refresh_ms",5000)));
+        // Use the same adaptive/manual cadence while the app is closed.
+        int interval=prefs.getBoolean("refresh_auto",true)?
+            AutoPollController.clamp(prefs.getInt("auto_poll_ms",500)):
+            AutoPollController.clamp(prefs.getInt("refresh_ms",500));
+        handler.postDelayed(this,interval);
     }};
 
     @Override public void onCreate(){
