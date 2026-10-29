@@ -657,15 +657,27 @@ public final class MainActivity extends Activity {
         setLive("EARFCN",stat("nv_arfcn"));setLive("PCI",stat("nv_pci"));
         setLive("eNodeB",stat("nv_enodbid"));setLive("CELL ID",stat("nv_globecellid"));
         setLive("TX Power",txPower());setLive("Батарея",battery());setLive("Устройств Wi‑Fi",wifiCount());
+        TextView batteryValue=overviewValues.get("Батарея");if(batteryValue!=null)batteryValue.setTextColor(batteryCharging()?Ui.GREEN:Ui.TEXT);
         if(overviewGauge!=null && newSample)overviewGauge.setLevel(quality());
         if(overviewGraph!=null && newSample)overviewGraph.push(historyDl.isEmpty()?0f:historyDl.peekLast(),historyUl.isEmpty()?0f:historyUl.peekLast());
     }
-    private String battery(){double n=num(status,"battery_vol_percent");
-        if(Double.isNaN(n))return "—";String raw=s("battery_vol_percent");if(n>0&&n<=1&&raw.contains("."))n*=100;
-        return Math.round(n)+"%";
+    private boolean batteryCharging(){
+        String value=stat("battery_charging").trim().toLowerCase(Locale.US);
+        return value.equals("1")||value.equals("true")||value.equals("charging")||
+            value.equals("yes")||value.equals("on");
+    }
+    private String battery(){
+        double n=num(status,"battery_vol_percent");
+        if(Double.isNaN(n))n=num(status,"battery_pers");
+        if(Double.isNaN(n))return "—";
+        String raw=s("battery_vol_percent");
+        if(n>0&&n<=1&&raw.contains("."))n*=100;
+        return (batteryCharging()?"⚡ ":"")+Math.round(n)+"%";
     }
     private void addRows(LinearLayout c,String[][] rows){for(int i=0;i<rows.length;i++){
         LinearLayout line=Ui.infoRow(this,rows[i][0],rows[i][1],rows[i][1].equals("—")?Ui.MUTED:i%2==0?Ui.TEXT:Ui.CYAN);
+        if("Батарея".equals(rows[i][0])&&batteryCharging())
+            ((TextView)line.getChildAt(1)).setTextColor(Ui.GREEN);
         if(tab==0)overviewValues.put(rows[i][0],(TextView)line.getChildAt(1));
         if(tab==3)networkValues.put(rows[i][0],(TextView)line.getChildAt(1));
         c.addView(line);
