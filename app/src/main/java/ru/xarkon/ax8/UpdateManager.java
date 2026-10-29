@@ -73,8 +73,8 @@ public final class UpdateManager {
         },"ax8pro-ota-check").start();
     }
     private static String friendly(Exception e){
-        if(e instanceof UnknownHostException)return "GitHub недоступен. Проверьте интернет, VPN и DNS.";
-        if(e instanceof SocketTimeoutException)return "GitHub не ответил вовремя.";
+        if(e instanceof UnknownHostException)return "Сервер обновлений недоступен. Проверьте интернет, VPN и DNS.";
+        if(e instanceof SocketTimeoutException)return "Сервер обновлений не ответил вовремя.";
         String m=e.getMessage();return m==null?e.toString():m;
     }
     public static File apkFile(Context c){return new File(new File(c.getFilesDir(),"ota"),APK_NAME);}
