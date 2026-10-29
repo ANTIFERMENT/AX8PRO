@@ -85,7 +85,7 @@ public final class MainActivity extends Activity {
         bandTracker.restore(prefs.getInt("pending_band",BandSwitchTracker.NONE),
             prefs.getLong("pending_band_since",0L),System.currentTimeMillis());
         if(!bandTracker.isPending() && prefs.contains("pending_band"))clearPendingBand();
-        Ui.load(prefs);applySystemBarTheme();requestNotificationPermission();createShell();showTab(0);
+        Ui.load(prefs);applySystemBarTheme();requestNotificationPermission();createShell();showTab(0);UpdateSchedule.configure(this);
     }
     @Override protected void onResume(){
         super.onResume();
@@ -104,6 +104,11 @@ public final class MainActivity extends Activity {
                 &&monitorOn&&!ownerMac.isEmpty()&&!priority.enabled)priority.enable(ownerMac);
         autoPollMs=AutoPollController.clamp(prefs.getInt("auto_poll_ms",500));
         running=true;handler.removeCallbacks(ticker);refresh(true);handler.postDelayed(ticker,refreshInterval());
+        if(!startupOtaChecked){
+            startupOtaChecked=true;
+            if(prefs.getBoolean("ota_on_launch",true))
+                handler.postDelayed(()->{if(!isFinishing()&&!isDestroyed())checkOta(true);},700);
+        }
     }
     @Override protected void onPause(){
         running=false;handler.removeCallbacks(ticker);
@@ -1435,33 +1440,47 @@ public final class MainActivity extends Activity {
         try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
         catch(Exception ignored){return "1.5.1";}
     }
+    private boolean startupOtaChecked=false,otaCheckBusy=false;
     private void checkOta(boolean silent){
-        if(!silent)displayWork("Проверка официального обновления…");
+        if(isFinishing()||isDestroyed()||otaCheckBusy)return;
+        otaCheckBusy=true;
+        final OtaProgressDialog ui=silent?null:new OtaProgressDialog(this);
+        if(ui!=null){ui.show();ui.stage("Проверка обновлений…","Подключаемся к серверу");}
         UpdateManager.check(this,new UpdateManager.Listener(){
-            @Override public void status(String message){if(!silent)displayWork(message);}
+            @Override public void status(String message){
+                if(ui!=null)ui.stage(message,"Проверяем новую версию");
+            }
             @Override public void available(UpdateManager.Release release,boolean newer){
-                displayWork("");
-                if(!newer){if(!silent)toast("Установлена актуальная версия");return;}
-                Ui.modal(MainActivity.this,"Доступно обновление " + release.versionName,
-                    release.notes.isEmpty()?"Обновить AX 8 PRO из официального канала?":release.notes,
-                    null,"Скачать и установить",()->downloadOta(release));
+                otaCheckBusy=false;
+                if(isFinishing()||isDestroyed())return;
+                if(!newer){if(ui!=null)ui.current("Версия "+BuildConfigVersion());return;}
+                OtaProgressDialog dialog=ui!=null?ui:new OtaProgressDialog(MainActivity.this);
+                if(ui==null)dialog.show();
+                dialog.offer(release.versionName,()->downloadOta(release,dialog));
             }
-            @Override public void downloaded(java.io.File apk){
-                displayWork("");UpdateManager.install(MainActivity.this);
+            @Override public void downloaded(java.io.File apk){}
+            @Override public void error(String message){
+                otaCheckBusy=false;
+                if(ui!=null&&!isFinishing()&&!isDestroyed())
+                    ui.fail(message,()->{ui.dismiss();checkOta(false);});
             }
-            @Override public void error(String message){displayWork("");if(!silent)alert("Обновление OTA",message);}
         });
     }
-    private void downloadOta(UpdateManager.Release release){
-        displayWork("Загрузка APK…");
+    private void downloadOta(UpdateManager.Release release,OtaProgressDialog dialog){
+        dialog.stage("Подготовка загрузки…","Проверка обновления");
         UpdateManager.download(this,release,new UpdateManager.Listener(){
-            @Override public void status(String message){displayWork(message);}
+            @Override public void status(String message){if(!isFinishing()&&!isDestroyed())dialog.stage(message,"Защищённое соединение");}
             @Override public void available(UpdateManager.Release r,boolean newer){}
             @Override public void progress(long downloaded,long total){
-                if(total>0)displayWork("Загрузка: "+Math.min(100,downloaded*100/total)+"%");
+                if(!isFinishing()&&!isDestroyed())dialog.downloading(downloaded,total);
             }
-            @Override public void downloaded(java.io.File apk){displayWork("");UpdateManager.install(MainActivity.this);}
-            @Override public void error(String message){displayWork("");alert("Ошибка OTA",message);}
+            @Override public void downloaded(java.io.File apk){
+                if(isFinishing()||isDestroyed())return;
+                dialog.dismiss();UpdateManager.install(MainActivity.this);
+            }
+            @Override public void error(String message){
+                if(!isFinishing()&&!isDestroyed())dialog.fail(message,()->downloadOta(release,dialog));
+            }
         });
     }
     private void startBackgroundMode(){
